@@ -2,7 +2,7 @@
 .codex/
 
 # Build outputs
-server
+/server
 bin/
 dist/
 *.exe
