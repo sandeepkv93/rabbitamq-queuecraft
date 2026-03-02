@@ -122,7 +122,11 @@ func (a *App) Close() error {
 func connectWithRetry(ctx context.Context, cfg config.Config, logger *slog.Logger) (*mq.RabbitMQ, error) {
 	var lastErr error
 	for attempt := 1; attempt <= cfg.AMQPMaxRetries; attempt++ {
-		client, err := mq.New(cfg.AMQPURL)
+		client, err := mq.New(cfg.AMQPURL, mq.TopologyConfig{
+			QueueName:  cfg.QueueName,
+			MaxRetries: cfg.AMQPMsgMaxRetries,
+			RetryDelay: cfg.AMQPMsgRetryDelay,
+		})
 		if err == nil {
 			logger.Info("connected to rabbitmq", "attempt", attempt)
 			return client, nil

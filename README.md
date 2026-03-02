@@ -2,7 +2,7 @@
 
 A Go project that combines:
 - `go-chi` REST API router
-- RabbitMQ queueing via `github.com/rabbitmq/amqp091-go`
+- RabbitMQ queueing via `github.com/rabbitmq/amqp091-go` with retry + dead-letter queues
 - PostgreSQL as the ticket source of truth
 - asynchronous ticket triage worker
 - containerized runtime with Docker Compose
@@ -13,9 +13,12 @@ A Go project that combines:
 flowchart LR
     C[Client] -->|POST /v1/tickets| API[Go chi API]
     API -->|INSERT ticket status=queued| DB[(PostgreSQL)]
-    API -->|Publish ticket message| Q[(RabbitMQ queue: tickets.triage)]
+    API -->|Publish ticket message| Q[(Main queue: tickets.triage)]
     W[Worker] -->|Consume message| Q
     W -->|Classify priority + action| L[Ticket Logic]
+    W -->|On failure, republish| R[(Retry queue: tickets.triage.retry)]
+    R -->|TTL backoff expires| Q
+    W -->|Exceeds max retries| D[(Dead-letter queue: tickets.triage.dead)]
     L -->|UPDATE ticket status=completed| DB
     C -->|GET /v1/tickets/:id| API
     API -->|SELECT latest ticket status| DB
@@ -27,6 +30,11 @@ flowchart LR
 The API accepts support tickets and returns `202 Accepted` immediately. A background worker consumes each ticket from RabbitMQ, classifies priority (`high|medium|low`) based on incident signals, and updates ticket handling guidance asynchronously.
 
 This demonstrates queue-backed decoupling between request handling and business processing with persistent ticket state in PostgreSQL.
+
+RabbitMQ policy in this project:
+- Main queue: `tickets.triage`
+- Retry queue: `tickets.triage.retry` (message TTL backoff)
+- Dead-letter queue: `tickets.triage.dead` (for exhausted retries)
 
 ## Project structure
 
@@ -109,6 +117,8 @@ Options:
 - `DB_RETRY_BACKOFF_SECONDS` (default `2`)
 - `AMQP_URL` (default `amqp://guest:guest@rabbitmq:5672/`)
 - `AMQP_QUEUE` (default `tickets.triage`)
+- `AMQP_MESSAGE_MAX_RETRIES` (default `3`)
+- `AMQP_MESSAGE_RETRY_DELAY_MS` (default `2000`)
 - `WORKER_SLEEP_MS` (default `1200`)
 - `AMQP_MAX_RETRIES` (default `20`)
 - `AMQP_RETRY_BACKOFF_SECONDS` (default `2`)
