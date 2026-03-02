@@ -1,6 +1,6 @@
-# rabbitamq-queuecraft
+# RabbitAMQ QueueCraft
 
-A production-oriented Go sample that combines:
+A Go project that combines:
 - `net/http` REST API
 - RabbitMQ queueing via `github.com/rabbitmq/amqp091-go`
 - asynchronous ticket triage worker
