@@ -66,6 +66,20 @@ Health check:
 curl -sS http://localhost:18080/healthz
 ```
 
+## Generate many tickets (queue load script)
+
+Use the included shell script to generate a burst of tickets and observe queue behavior:
+
+```bash
+./scripts/load-tickets.sh -n 200 -c 25
+```
+
+Options:
+- `-u` API base URL (default `http://localhost:18080`)
+- `-n` total tickets (default `50`)
+- `-c` parallel requests/workers (default `10`)
+- `-p` customer id prefix
+
 ## Environment variables
 
 - `HTTP_ADDR` (default `:8080`)

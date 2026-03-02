@@ -54,7 +54,7 @@ func (h *Handler) handleCreateTicket(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleGetTicket(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeError(w, http.StatusMethodNotAllowed, r.Method+" method not allowed")
 		return
 	}
 
