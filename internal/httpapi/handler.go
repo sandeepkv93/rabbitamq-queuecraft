@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 
 	"rabbitamq-queuecraft/internal/service"
 	"rabbitamq-queuecraft/internal/store"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 )
 
 type Handler struct {
@@ -19,11 +21,22 @@ func NewHandler(svc *service.TicketService) *Handler {
 }
 
 func (h *Handler) Routes() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", h.handleHealth)
-	mux.HandleFunc("/v1/tickets", h.handleCreateTicket)
-	mux.HandleFunc("/v1/tickets/", h.handleGetTicket)
-	return mux
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RealIP)
+	r.Use(middleware.Recoverer)
+
+	r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusNotFound, "route not found")
+	})
+	r.MethodNotAllowed(func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	})
+
+	r.Get("/healthz", h.handleHealth)
+	r.Post("/v1/tickets", h.handleCreateTicket)
+	r.Get("/v1/tickets/{ticketID}", h.handleGetTicket)
+	return r
 }
 
 func (h *Handler) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -31,11 +44,6 @@ func (h *Handler) handleHealth(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (h *Handler) handleCreateTicket(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
 	defer r.Body.Close()
 	var req service.CreateTicketRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -53,13 +61,8 @@ func (h *Handler) handleCreateTicket(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleGetTicket(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, r.Method+" method not allowed")
-		return
-	}
-
-	id := strings.TrimPrefix(r.URL.Path, "/v1/tickets/")
-	if strings.TrimSpace(id) == "" {
+	id := chi.URLParam(r, "ticketID")
+	if id == "" {
 		writeError(w, http.StatusBadRequest, "ticket id is required")
 		return
 	}

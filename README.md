@@ -1,7 +1,7 @@
 # RabbitAMQ QueueCraft
 
 A Go project that combines:
-- `net/http` REST API
+- `go-chi` REST API router
 - RabbitMQ queueing via `github.com/rabbitmq/amqp091-go`
 - PostgreSQL as the ticket source of truth
 - asynchronous ticket triage worker
@@ -11,7 +11,7 @@ A Go project that combines:
 
 ```mermaid
 flowchart LR
-    C[Client] -->|POST /v1/tickets| API[Go net/http API]
+    C[Client] -->|POST /v1/tickets| API[Go chi API]
     API -->|INSERT ticket status=queued| DB[(PostgreSQL)]
     API -->|Publish ticket message| Q[(RabbitMQ queue: tickets.triage)]
     W[Worker] -->|Consume message| Q
@@ -33,7 +33,7 @@ This demonstrates queue-backed decoupling between request handling and business 
 - `cmd/server`: process entrypoint
 - `internal/config`: environment configuration
 - `internal/app`: app composition and lifecycle
-- `internal/httpapi`: REST handlers using `net/http`
+- `internal/httpapi`: REST handlers and `chi` routes
 - `internal/mq`: RabbitMQ adapter
 - `internal/service`: ticket domain service and triage logic
 - `internal/store`: storage adapters (`postgres` + in-memory test store)
