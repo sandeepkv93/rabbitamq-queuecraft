@@ -1,4 +1,21 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: rabbitamq-postgres
+    environment:
+      POSTGRES_DB: tickets
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d tickets"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
   rabbitmq:
     image: rabbitmq:3.13-management
     container_name: rabbitmq
@@ -19,13 +36,18 @@ services:
       dockerfile: Dockerfile
     container_name: rabbitamq-queuecraft
     depends_on:
+      postgres:
+        condition: service_healthy
       rabbitmq:
         condition: service_healthy
     environment:
       HTTP_ADDR: ":8080"
       APP_MODE: "all"
+      DATABASE_URL: "postgres://postgres:postgres@postgres:5432/tickets?sslmode=disable"
       AMQP_URL: "amqp://guest:guest@rabbitmq:5672/"
       AMQP_QUEUE: "tickets.triage"
+      DB_MAX_RETRIES: "20"
+      DB_RETRY_BACKOFF_SECONDS: "2"
       AMQP_MAX_RETRIES: "20"
       AMQP_RETRY_BACKOFF_SECONDS: "2"
       WORKER_SLEEP_MS: "1200"
@@ -34,4 +56,5 @@ services:
     restart: unless-stopped
 
 volumes:
+  postgres_data:
   rabbitmq_data:

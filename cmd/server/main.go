@@ -9,10 +9,13 @@ import (
 
 	"rabbitamq-queuecraft/internal/app"
 	"rabbitamq-queuecraft/internal/config"
+
+	"github.com/joho/godotenv"
 )
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	_ = godotenv.Load()
 
 	cfg, err := config.Load()
 	if err != nil {

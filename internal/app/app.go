@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -14,23 +15,38 @@ import (
 	"rabbitamq-queuecraft/internal/service"
 	"rabbitamq-queuecraft/internal/store"
 	"rabbitamq-queuecraft/internal/worker"
+
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 type App struct {
 	cfg      config.Config
 	logger   *slog.Logger
+	db       *sql.DB
 	mqClient *mq.RabbitMQ
 	server   *http.Server
 	worker   *worker.Runner
 }
 
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, error) {
-	mqClient, err := connectWithRetry(ctx, cfg, logger)
+	db, err := connectPostgresWithRetry(ctx, cfg, logger)
 	if err != nil {
 		return nil, err
 	}
 
-	repo := store.NewMemoryTicketStore()
+	mqClient, err := connectWithRetry(ctx, cfg, logger)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
+	repo := store.NewPostgresTicketStore(db)
+	if err := repo.EnsureSchema(ctx); err != nil {
+		_ = mqClient.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("ensure ticket schema: %w", err)
+	}
+
 	svc := service.NewTicketService(repo, mqClient, cfg.QueueName, time.Duration(cfg.WorkerSleepMs)*time.Millisecond, logger)
 
 	apiHandler := httpapi.NewHandler(svc)
@@ -47,7 +63,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		Logger:   logger,
 	}
 
-	return &App{cfg: cfg, logger: logger, mqClient: mqClient, server: server, worker: wk}, nil
+	return &App{cfg: cfg, logger: logger, db: db, mqClient: mqClient, server: server, worker: wk}, nil
 }
 
 func (a *App) Run(ctx context.Context) error {
@@ -89,10 +105,18 @@ func (a *App) Run(ctx context.Context) error {
 }
 
 func (a *App) Close() error {
+	var closeErr error
 	if a.mqClient != nil {
-		return a.mqClient.Close()
+		if err := a.mqClient.Close(); err != nil {
+			closeErr = err
+		}
 	}
-	return nil
+	if a.db != nil {
+		if err := a.db.Close(); err != nil && closeErr == nil {
+			closeErr = err
+		}
+	}
+	return closeErr
 }
 
 func connectWithRetry(ctx context.Context, cfg config.Config, logger *slog.Logger) (*mq.RabbitMQ, error) {
@@ -114,4 +138,30 @@ func connectWithRetry(ctx context.Context, cfg config.Config, logger *slog.Logge
 		}
 	}
 	return nil, fmt.Errorf("connect rabbitmq after retries: %w", lastErr)
+}
+
+func connectPostgresWithRetry(ctx context.Context, cfg config.Config, logger *slog.Logger) (*sql.DB, error) {
+	var lastErr error
+	for attempt := 1; attempt <= cfg.DBMaxRetries; attempt++ {
+		db, err := sql.Open("pgx", cfg.DatabaseURL)
+		if err != nil {
+			lastErr = err
+		} else {
+			pingErr := db.PingContext(ctx)
+			if pingErr == nil {
+				logger.Info("connected to postgres", "attempt", attempt)
+				return db, nil
+			}
+			lastErr = pingErr
+			_ = db.Close()
+		}
+
+		logger.Warn("postgres connection failed", "attempt", attempt, "max_retries", cfg.DBMaxRetries, "error", lastErr)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(cfg.DBRetryBackoff):
+		}
+	}
+	return nil, fmt.Errorf("connect postgres after retries: %w", lastErr)
 }

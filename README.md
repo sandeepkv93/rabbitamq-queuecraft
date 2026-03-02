@@ -3,6 +3,7 @@
 A Go project that combines:
 - `net/http` REST API
 - RabbitMQ queueing via `github.com/rabbitmq/amqp091-go`
+- PostgreSQL as the ticket source of truth
 - asynchronous ticket triage worker
 - containerized runtime with Docker Compose
 
@@ -11,20 +12,21 @@ A Go project that combines:
 ```mermaid
 flowchart LR
     C[Client] -->|POST /v1/tickets| API[Go net/http API]
-    API -->|Store status=queued| S[(In-Memory Ticket Store)]
+    API -->|INSERT ticket status=queued| DB[(PostgreSQL)]
     API -->|Publish ticket message| Q[(RabbitMQ queue: tickets.triage)]
     W[Worker] -->|Consume message| Q
     W -->|Classify priority + action| L[Ticket Logic]
-    L -->|Update status=completed| S
+    L -->|UPDATE ticket status=completed| DB
     C -->|GET /v1/tickets/:id| API
-    API -->|Return latest ticket status| C
+    API -->|SELECT latest ticket status| DB
+    API -->|Return latest ticket state| C
 ```
 
 ## Why this example is interesting
 
 The API accepts support tickets and returns `202 Accepted` immediately. A background worker consumes each ticket from RabbitMQ, classifies priority (`high|medium|low`) based on incident signals, and updates ticket handling guidance asynchronously.
 
-This demonstrates queue-backed decoupling between request handling and business processing.
+This demonstrates queue-backed decoupling between request handling and business processing with persistent ticket state in PostgreSQL.
 
 ## Project structure
 
@@ -34,15 +36,18 @@ This demonstrates queue-backed decoupling between request handling and business 
 - `internal/httpapi`: REST handlers using `net/http`
 - `internal/mq`: RabbitMQ adapter
 - `internal/service`: ticket domain service and triage logic
-- `internal/store`: in-memory ticket store
+- `internal/store`: storage adapters (`postgres` + in-memory test store)
 - `internal/worker`: queue consumer runner
 
 ## Run locally (Go)
 
 ```bash
-docker compose up -d rabbitmq
-AMQP_URL=amqp://guest:guest@localhost:5672/ go run ./cmd/server
+docker compose up -d postgres rabbitmq
+cp .env.example .env
+go run ./cmd/server
 ```
+
+The app loads environment variables from `.env` via `github.com/joho/godotenv`.
 
 ## Run full stack (Docker Compose)
 
@@ -52,6 +57,7 @@ docker compose up --build
 
 Services:
 - API: `http://localhost:18080`
+- PostgreSQL: `localhost:5433` (`postgres` / `postgres`, db: `tickets`)
 - RabbitMQ management UI: `http://localhost:15672` (`guest` / `guest`)
 
 ## API usage
@@ -98,6 +104,9 @@ Options:
 
 - `HTTP_ADDR` (default `:8080`)
 - `APP_MODE` (`all|api|worker`, default `all`)
+- `DATABASE_URL` (default `postgres://postgres:postgres@postgres:5432/tickets?sslmode=disable`)
+- `DB_MAX_RETRIES` (default `20`)
+- `DB_RETRY_BACKOFF_SECONDS` (default `2`)
 - `AMQP_URL` (default `amqp://guest:guest@rabbitmq:5672/`)
 - `AMQP_QUEUE` (default `tickets.triage`)
 - `WORKER_SLEEP_MS` (default `1200`)

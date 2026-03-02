@@ -14,6 +14,7 @@ COPY --from=builder /out/server /app/server
 
 ENV HTTP_ADDR=:8080 \
     APP_MODE=all \
+    DATABASE_URL=postgres://postgres:postgres@postgres:5432/tickets?sslmode=disable \
     AMQP_URL=amqp://guest:guest@rabbitmq:5672/ \
     AMQP_QUEUE=tickets.triage
 
