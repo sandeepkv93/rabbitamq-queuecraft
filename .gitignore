@@ -1,0 +1,26 @@
+# Mission artifacts
+.codex/
+
+# Build outputs
+server
+bin/
+dist/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go artifacts
+*.test
+*.out
+coverage.out
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Editor/OS
+.DS_Store
+.vscode/
+.idea/
