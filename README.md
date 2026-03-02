@@ -6,6 +6,20 @@ A Go project that combines:
 - asynchronous ticket triage worker
 - containerized runtime with Docker Compose
 
+## Flow Diagram
+
+```mermaid
+flowchart LR
+    C[Client] -->|POST /v1/tickets| API[Go net/http API]
+    API -->|Store status=queued| S[(In-Memory Ticket Store)]
+    API -->|Publish ticket message| Q[(RabbitMQ queue: tickets.triage)]
+    W[Worker] -->|Consume message| Q
+    W -->|Classify priority + action| L[Ticket Logic]
+    L -->|Update status=completed| S
+    C -->|GET /v1/tickets/:id| API
+    API -->|Return latest ticket status| C
+```
+
 ## Why this example is interesting
 
 The API accepts support tickets and returns `202 Accepted` immediately. A background worker consumes each ticket from RabbitMQ, classifies priority (`high|medium|low`) based on incident signals, and updates ticket handling guidance asynchronously.
