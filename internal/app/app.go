@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"rabbitamq-queuecraft/internal/config"
@@ -67,41 +68,112 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 }
 
 func (a *App) Run(ctx context.Context) error {
-	errCh := make(chan error, 2)
+	type componentResult struct {
+		name string
+		err  error
+	}
+
+	componentCount := 0
+	if a.cfg.EnableAPI() {
+		componentCount++
+	}
+	if a.cfg.EnableWorker() {
+		componentCount++
+	}
+
+	if componentCount == 0 {
+		a.logger.Info("no components enabled for selected mode", "mode", a.cfg.Mode)
+		return nil
+	}
+
+	a.logger.Info(
+		"app mode started",
+		"mode",
+		a.cfg.Mode,
+		"api_enabled",
+		a.cfg.EnableAPI(),
+		"worker_enabled",
+		a.cfg.EnableWorker(),
+		"shutdown_timeout",
+		a.cfg.ShutdownTimeout,
+	)
+
+	resultCh := make(chan componentResult, componentCount)
+	var wg sync.WaitGroup
+	startComponent := func(name string, run func() error) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resultCh <- componentResult{name: name, err: run()}
+		}()
+	}
 
 	if a.cfg.EnableWorker() {
-		go func() {
-			errCh <- a.worker.Run(ctx)
-		}()
+		startComponent("worker", func() error {
+			return a.worker.Run(ctx)
+		})
 	}
 
 	if a.cfg.EnableAPI() {
-		go func() {
+		startComponent("api", func() error {
 			a.logger.Info("http server started", "addr", a.cfg.HTTPAddr)
 			if err := a.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				errCh <- fmt.Errorf("listen and serve: %w", err)
-				return
+				return fmt.Errorf("listen and serve: %w", err)
 			}
-			errCh <- nil
-		}()
+			a.logger.Info("http server stopped")
+			return nil
+		})
 	}
 
-	if !a.cfg.EnableAPI() && !a.cfg.EnableWorker() {
-		return nil
-	}
-
+	remaining := componentCount
+	shutdownStarted := false
 	select {
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), a.cfg.ShutdownTimeout)
-		defer cancel()
-
-		if a.cfg.EnableAPI() {
-			_ = a.server.Shutdown(shutdownCtx)
-		}
-		return nil
-	case err := <-errCh:
-		return err
+		shutdownStarted = true
+	default:
 	}
+
+	for remaining > 0 {
+		if shutdownStarted {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), a.cfg.ShutdownTimeout)
+			if a.cfg.EnableAPI() {
+				a.logger.Info("initiating graceful shutdown", "mode", a.cfg.Mode)
+				if err := a.server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+					cancel()
+					return fmt.Errorf("shutdown http server: %w", err)
+				}
+			}
+
+			waitCh := make(chan struct{})
+			go func() {
+				wg.Wait()
+				close(waitCh)
+			}()
+
+			select {
+			case <-waitCh:
+				cancel()
+				a.logger.Info("graceful shutdown complete", "mode", a.cfg.Mode)
+				return nil
+			case <-shutdownCtx.Done():
+				cancel()
+				return fmt.Errorf("shutdown timeout exceeded after %s", a.cfg.ShutdownTimeout)
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			shutdownStarted = true
+		case result := <-resultCh:
+			remaining--
+			if result.err != nil {
+				return fmt.Errorf("%s exited with error: %w", result.name, result.err)
+			}
+		}
+	}
+
+	a.logger.Info("all components stopped", "mode", a.cfg.Mode)
+	return nil
 }
 
 func (a *App) Close() error {

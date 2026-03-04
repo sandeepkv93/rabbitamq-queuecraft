@@ -1,3 +1,27 @@
+x-app-common: &app-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  depends_on:
+    postgres:
+      condition: service_healthy
+    rabbitmq:
+      condition: service_healthy
+  environment: &app-env
+    HTTP_ADDR: ":8080"
+    DATABASE_URL: "postgres://postgres:postgres@postgres:5432/tickets?sslmode=disable"
+    AMQP_URL: "amqp://guest:guest@rabbitmq:5672/"
+    AMQP_QUEUE: "tickets.triage"
+    AMQP_MESSAGE_MAX_RETRIES: "3"
+    AMQP_MESSAGE_RETRY_DELAY_MS: "2000"
+    DB_MAX_RETRIES: "20"
+    DB_RETRY_BACKOFF_SECONDS: "2"
+    AMQP_MAX_RETRIES: "20"
+    AMQP_RETRY_BACKOFF_SECONDS: "2"
+    WORKER_SLEEP_MS: "1200"
+    SHUTDOWN_TIMEOUT_SECONDS: "15"
+  restart: unless-stopped
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -31,31 +55,30 @@ services:
       - rabbitmq_data:/var/lib/rabbitmq
 
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    <<: *app-common
     container_name: rabbitamq-queuecraft
-    depends_on:
-      postgres:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
+    profiles: ["demo"]
     environment:
-      HTTP_ADDR: ":8080"
+      <<: *app-env
       APP_MODE: "all"
-      DATABASE_URL: "postgres://postgres:postgres@postgres:5432/tickets?sslmode=disable"
-      AMQP_URL: "amqp://guest:guest@rabbitmq:5672/"
-      AMQP_QUEUE: "tickets.triage"
-      AMQP_MESSAGE_MAX_RETRIES: "3"
-      AMQP_MESSAGE_RETRY_DELAY_MS: "2000"
-      DB_MAX_RETRIES: "20"
-      DB_RETRY_BACKOFF_SECONDS: "2"
-      AMQP_MAX_RETRIES: "20"
-      AMQP_RETRY_BACKOFF_SECONDS: "2"
-      WORKER_SLEEP_MS: "1200"
     ports:
       - "18080:8080"
-    restart: unless-stopped
+
+  api:
+    <<: *app-common
+    container_name: rabbitamq-api
+    environment:
+      <<: *app-env
+      APP_MODE: "api"
+    ports:
+      - "18080:8080"
+
+  worker:
+    <<: *app-common
+    container_name: rabbitamq-worker
+    environment:
+      <<: *app-env
+      APP_MODE: "worker"
 
 volumes:
   postgres_data:
